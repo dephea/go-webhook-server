@@ -33,17 +33,33 @@ func Response(w http.ResponseWriter, r *http.Request) {
 	if ip == "" {
 		ip = r.RemoteAddr
 	}
-
-	fmt.Println(ip, r.Method)
-
+	
+	
+	
 	body, err := io.ReadAll(r.Body)
 	if err!=nil {
 		fmt.Println(err)
 		return 
 	}
-
+	
 	var parsedBody map[string]interface{}
 	err = json.Unmarshal(body, &parsedBody)
+
+
+	typeOfWebhook := "noType"
+	instanceId := "instanceId"
+
+	if val, ok := parsedBody["typeWebhook"].(string); ok {
+		typeOfWebhook = val
+	}
+
+	if instanceData, ok := parsedBody["instanceData"].(map[string]interface{}); ok {
+		if val, ok := instanceData["idInstance"]; ok {
+			instanceId = fmt.Sprintf("%.0f", val)
+		}
+	}
+	fmt.Println(ip, r.Method, instanceId)
+
 	if err!=nil{
 		fmt.Println("failed to unmarshal body")
 		w.WriteHeader(400)
@@ -59,38 +75,34 @@ func Response(w http.ResponseWriter, r *http.Request) {
 			fmt.Println("error while marshaling bson doc")
 		}
 
-		res, err := WriteToMongo("undefined", docByte)
+		res, err := WriteToMongo("undefined", "undefined",docByte) 
 		if err!=nil {
 			fmt.Println("error while writing undefined object to mongo ", err)
 		}
 
-		fmt.Printf("Added document to the %s collection. Object ID: %s\n", "undefined", res)
+		fmt.Printf("Added document to the %s collection. %s\n", "undefined", res)
 		return
 	}
 
-	typeOfWebhook := "noType"
-
-	if val, ok := parsedBody["typeWebhook"].(string); ok {
-		typeOfWebhook = val
-	}
 
 	defer r.Body.Close()
 
 	w.WriteHeader(200)
 
-	go func(collectionName string, body []byte){
-		res, err := WriteToMongo(typeOfWebhook, body)
+	go func(instanceId, typeOfWebhook string, body []byte){
+		res, err := WriteToMongo(instanceId, typeOfWebhook, body)
 		if err!=nil {
 			fmt.Println("error writing to mongo: ", err)
 		}
-		fmt.Printf("Added document to the %s collection. Object ID: %s\n", typeOfWebhook, res)
-	}(typeOfWebhook, body)
+		fmt.Printf("Added document to the %s collection. %s\n", typeOfWebhook, res)
+	}(instanceId, typeOfWebhook, body)
 
 }
 
-func WriteToMongo(collectionName string, object []byte) (*mongo.InsertOneResult, error) {
-	collection := Client.Database(viper.GetString("database.name")).Collection(collectionName)
-
+func WriteToMongo(instanceId, typeOfWebhook string, object []byte) (*mongo.InsertOneResult, error) {
+	//collection := Client.Database(viper.GetString("database.name")).Collection(collectionName)
+	collection := Client.Database(instanceId).Collection(typeOfWebhook)
+	collection2 := Client.Database(instanceId).Collection("allWebhooks")
 	var bsonBody interface{}
 
 	if err := bson.UnmarshalExtJSON(object, true,&bsonBody); err !=nil {
@@ -98,6 +110,10 @@ func WriteToMongo(collectionName string, object []byte) (*mongo.InsertOneResult,
 	}
 
 	res, err := collection.InsertOne(context.Background(), bsonBody)
+	if err!=nil { 
+		return nil, err
+	}
+	_, err = collection2.InsertOne(context.Background(), bsonBody)
 	if err!=nil { 
 		return nil, err
 	}
